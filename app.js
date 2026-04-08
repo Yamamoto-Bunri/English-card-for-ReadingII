@@ -1,7 +1,45 @@
 let currentIndex = 0;
-// ブラウザの保存領域から「覚えた単語リスト」を読み込む。なければ空。
-let masteredWords = JSON.parse(localStorage.getItem('masteredWords')) || [];
+let masteredWords = [];
+let studentName = "";
 
+// ページ読み込み時の処理
+window.onload = async function() {
+    // 1. 生徒の名前を確認（ブラウザに保存されていなければ入力させる）
+    studentName = localStorage.getItem('studentName');
+    if (!studentName || studentName === "null") {
+        studentName = prompt("【進捗保存用】フルネームを漢字で入力してください。");
+        if (studentName) {
+            localStorage.setItem('studentName', studentName);
+        } else {
+            studentName = "匿名希望"; // キャンセルされた場合の予備
+        }
+    }
+
+    // 2. Firebaseから保存済みの進捗を読み込む
+    try {
+        // window.db と window.fs は index.html 側で定義されたものを使用
+        const docRef = window.fs.doc(window.db, "progress", studentName);
+        const docSnap = await window.fs.getDoc(docRef);
+
+        if (docSnap.exists()) {
+            masteredWords = docSnap.data().words || [];
+            console.log("進捗を読み込みました:", masteredWords);
+        }
+    } catch (e) {
+        console.error("読み込みエラー:", e);
+    }
+
+    // 3. カードのクリックイベント（回転）を設定
+    const card = document.getElementById('card');
+    card.onclick = function() {
+        this.classList.toggle('is-flipped');
+    };
+
+    // 4. 最初のカードを表示
+    displayCard();
+};
+
+// 画面更新処理
 function displayCard() {
     const data = wordList[currentIndex];
     const isMastered = masteredWords.includes(data["Word"]);
@@ -23,7 +61,6 @@ function displayCard() {
     const dButton = document.getElementById('show-derived');
     dDisplay.style.display = 'none';
 
-    // 派生語データがあるか判定
     const hasDerived = (data["別の品詞"] && data["別の品詞"].trim() !== "") || 
                         (data["派生語1"] && data["派生語1"].trim() !== "");
 
@@ -60,9 +97,10 @@ function displayCard() {
     updateProgress();
 }
 
-// チェックボックスをクリックした時の処理
-window.toggleMastered = function(event) {
+// チェックボックスをクリックした時の処理（Firebaseへ保存）
+window.toggleMastered = async function(event) {
     const word = wordList[currentIndex]["Word"];
+    
     if (event.target.checked) {
         if (!masteredWords.includes(word)) {
             masteredWords.push(word);
@@ -70,17 +108,26 @@ window.toggleMastered = function(event) {
     } else {
         masteredWords = masteredWords.filter(w => w !== word);
     }
-    // ブラウザに保存
-    localStorage.setItem('masteredWords', JSON.stringify(masteredWords));
-    // 表面のバッジをすぐ更新
+
+    // 画面上の見た目を即座に更新
     document.getElementById("complete-badge").style.display = event.target.checked ? "block" : "none";
     updateProgress();
+
+    // Firebaseへ送信（非同期）
+    try {
+        await window.fs.setDoc(window.fs.doc(window.db, "progress", studentName), {
+            words: masteredWords,
+            updatedAt: new Date()
+        });
+    } catch (e) {
+        console.error("保存エラー:", e);
+        alert("進捗の保存に失敗しました。ネット環境を確認してください。");
+    }
 };
 
 // 進捗表示の更新
 function updateProgress() {
     const total = wordList.length;
-    // wordListに含まれている覚えた単語だけをカウント
     const masteredCount = masteredWords.filter(w => wordList.some(item => item.Word === w)).length;
     const percent = total > 0 ? (masteredCount / total) * 100 : 0;
     
@@ -109,12 +156,4 @@ window.toggleDerived = function(event) {
     event.stopPropagation();
     const d = document.getElementById('derived-display');
     d.style.display = d.style.display === 'block' ? 'none' : 'block';
-};
-
-window.onload = function() {
-    const card = document.getElementById('card');
-    card.onclick = function() {
-        this.classList.toggle('is-flipped');
-    };
-    displayCard();
 };
